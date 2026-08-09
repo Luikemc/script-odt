@@ -9,10 +9,10 @@ jobs:
 
     steps:
       - name: Baixar código
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Configurar Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
@@ -21,14 +21,10 @@ jobs:
 
       - name: Gerar EXE
         run: |
-          python -m PyInstaller `
-            --onefile `
-            --windowed `
-            --name SublinharWhatsApp `
-            sublinha.py
+          python -m PyInstaller --onefile --name SublinharWhatsApp sublinha.py
 
       - name: Disponibilizar EXE
         uses: actions/upload-artifact@v4
         with:
           name: SublinharWhatsApp
-          path: dist\SublinharWhatsApp.exe
+          path: dist/SublinharWhatsApp.exe

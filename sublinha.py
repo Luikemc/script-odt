@@ -5,381 +5,280 @@ import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-
-# ============================================================
-# CONFIGURAÇÃO
-# ============================================================
-
-# Aceita:
-# [01/03/2025, 11:10:24] Nome:
-# [ 01/03/2025 , 11:10:24] Nome:
-# [01/03/2025, 11:10:24] Nome: qualquer coisa
-#
-# O sublinhado será aplicado somente até o ":" do nome.
-
 PADRAO = re.compile(
-    r'\[\s*'
-    r'\d{2}/\d{2}/\d{4}'
-    r'\s*,\s*'
-    r'\d{2}:\d{2}:\d{2}'
-    r'\s*\]\s*'
-    r'[^:\n\r]+'
-    r':'
+    r'\[\s*\d{2}/\d{2}/\d{4}\s*,\s*\d{2}:\d{2}:\d{2}\s*\]\s*[^:\n\r]+?:'
 )
 
-
-# Namespaces usados pelo ODT
 NS = {
     "office": "urn:oasis:names:tc:opendocument:xmlns:office:1.0",
     "text": "urn:oasis:names:tc:opendocument:xmlns:text:1.0",
     "style": "urn:oasis:names:tc:opendocument:xmlns:style:1.0",
     "fo": "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0",
 }
-
 for prefix, uri in NS.items():
     ET.register_namespace(prefix, uri)
 
 
-# ============================================================
-# FUNÇÕES DE PROCESSAMENTO
-# ============================================================
-
-def texto_do_elemento(elemento):
-    """
-    Retorna todo o texto existente dentro de um elemento.
-    """
-    partes = []
-
-    for node in elemento.iter():
-        if node.tag == f"{{{NS['text']}}}s":
-            quantidade = int(
-                node.attrib.get(
-                    f"{{{NS['text']}}}c",
-                    "1"
-                )
-            )
-            partes.append(" " * quantidade)
-
-        elif node.tag == f"{{{NS['text']}}}tab":
-            partes.append("\t")
-
-        elif node.tag == f"{{{NS['text']}}}line-break":
-            partes.append("\n")
-
-        elif node.text:
-            partes.append(node.text)
-
-    return "".join(partes)
-
-
-def criar_estilo_sublinhado(styles_root):
-    """
-    Cria um estilo ODT específico para sublinhado.
-    """
-
-    nome_estilo = "SublinhadoAutomatico"
-
-    # Verifica se já existe
-    for style in styles_root.findall(
-        f".//{{{NS['style']}}}style"
-    ):
-        if style.attrib.get(
-            f"{{{NS['style']}}}name"
-        ) == nome_estilo:
-            return nome_estilo
-
-    estilo = ET.Element(
-        f"{{{NS['style']}}}style",
-        {
-            f"{{{NS['style']}}}name": nome_estilo,
-            f"{{{NS['style']}}}family": "text",
-        }
-    )
-
-    propriedades = ET.SubElement(
-        estilo,
-        f"{{{NS['style']}}}text-properties"
-    )
-
-    propriedades.set(
-        f"{{{NS['fo']}}}text-decoration",
-        "underline"
-    )
-
-    styles_root.append(estilo)
-
-    return nome_estilo
-
-
-def processar_paragrafo(paragrafo, estilo_sublinhado):
-    """
-    Procura cabeçalhos de mensagens dentro do parágrafo.
-    """
-
-    texto = texto_do_elemento(paragrafo)
-
-    matches = list(PADRAO.finditer(texto))
-
-    if not matches:
-        return 0
-
-    nos_texto = []
-
-    for node in paragrafo.iter():
-        if node.text:
-            nos_texto.append({
-                "node": node,
-                "inicio": None,
-                "fim": None,
-                "texto": node.text
-            })
-
-    posicao = 0
-
-    for item in nos_texto:
-        tamanho = len(item["texto"])
-        item["inicio"] = posicao
-        item["fim"] = posicao + tamanho
-        posicao += tamanho
-
-    total = 0
-
-    for match in reversed(matches):
-
-        inicio = match.start()
-        fim = match.end()
-
-        afetados = []
-
-        for item in nos_texto:
-            if item["fim"] <= inicio:
-                continue
-
-            if item["inicio"] >= fim:
-                continue
-
-            afetados.append(item)
-
-        if not afetados:
-            continue
-
-        if len(afetados) == 1:
-
-            item = afetados[0]
-            node = item["node"]
-
-            inicio_local = inicio - item["inicio"]
-            fim_local = fim - item["inicio"]
-
-            texto_original = node.text or ""
-
-            antes = texto_original[:inicio_local]
-            selecionado = texto_original[
-                inicio_local:fim_local
-            ]
-            depois = texto_original[fim_local:]
-
-            node.text = antes
-
-            span = ET.Element(
-                f"{{{NS['text']}}}span",
-                {
-                    f"{{{NS['text']}}}style-name":
-                        estilo_sublinhado
-                }
-            )
-
-            span.text = selecionado
-
-            pai = encontrar_pai(paragrafo, node)
-
-            if pai is not None:
-
-                indice = list(pai).index(node)
-
-                pai.insert(indice + 1, span)
-
-                if depois:
-                    span.tail = depois
-
-            total += 1
-
-    return total
-
-
 def encontrar_pai(raiz, filho):
-    """
-    Encontra o elemento pai de um determinado nó.
-    """
-
     for elemento in raiz.iter():
-
-        for filho_atual in list(elemento):
-
-            if filho_atual is filho:
-                return elemento
-
+        if filho in list(elemento):
+            return elemento
     return None
 
 
-def processar_odt(arquivo_entrada, arquivo_saida):
-    """
-    Abre o ODT, encontra os cabeçalhos WhatsApp
-    e aplica sublinhado.
-    """
+def criar_estilo_sublinhado(styles_root):
+    nome = "SublinhadoAutomatico"
+    for style in styles_root.iter(f"{{{NS['style']}}}style"):
+        if style.attrib.get(f"{{{NS['style']}}}name") == nome:
+            return nome
+    estilo = ET.SubElement(
+        styles_root,
+        f"{{{NS['style']}}}style",
+        {
+            f"{{{NS['style']}}}name": nome,
+            f"{{{NS['style']}}}family": "text",
+        },
+    )
+    props = ET.SubElement(
+        estilo, f"{{{NS['style']}}}text-properties"
+    )
+    props.set(f"{{{NS['fo']}}}text-decoration", "underline")
+    return nome
 
-    arquivo_entrada = Path(arquivo_entrada)
-    arquivo_saida = Path(arquivo_saida)
 
-    with tempfile.TemporaryDirectory() as temp:
+def montar_mapa(paragrafo):
+    partes = []
+    pos = 0
 
-        temp = Path(temp)
+    def add(node, texto, kind):
+        nonlocal pos
+        if texto:
+            partes.append({
+                "node": node, "texto": texto,
+                "inicio": pos, "fim": pos + len(texto),
+                "kind": kind
+            })
+            pos += len(texto)
 
-        with zipfile.ZipFile(
-            arquivo_entrada,
-            "r"
-        ) as zip_in:
+    def visit(node):
+        if node.text:
+            add(node, node.text, "text")
+        for child in list(node):
+            if child.tag == f"{{{NS['text']}}}s":
+                n = int(child.attrib.get(f"{{{NS['text']}}}c", "1"))
+                add(child, " " * n, "special")
+            elif child.tag == f"{{{NS['text']}}}tab":
+                add(child, "\t", "special")
+            elif child.tag == f"{{{NS['text']}}}line-break":
+                add(child, "\n", "special")
+            else:
+                visit(child)
+            if child.tail:
+                add(child, child.tail, "tail")
 
-            zip_in.extractall(temp)
+    visit(paragrafo)
+    return partes
 
-        content_xml = temp / "content.xml"
-        styles_xml = temp / "styles.xml"
 
-        tree_content = ET.parse(content_xml)
-        root_content = tree_content.getroot()
+def estilo_sublinhado(node, estilos):
+    if node is None:
+        return False
+    nome = node.attrib.get(f"{{{NS['text']}}}style-name")
+    vistos = set()
+    while nome and nome not in vistos:
+        vistos.add(nome)
+        style = estilos.get(nome)
+        if style is None:
+            break
+        props = style.find(f"{{{NS['style']}}}text-properties")
+        if props is not None:
+            decor = props.attrib.get(f"{{{NS['fo']}}}text-decoration", "")
+            if "underline" in decor.lower():
+                return True
+        nome = style.attrib.get(f"{{{NS['style']}}}parent-style-name")
+    return False
 
-        if styles_xml.exists():
 
-            tree_styles = ET.parse(styles_xml)
-            root_styles = tree_styles.getroot()
+def aplicar_span(paragrafo, item, a, b, estilo):
+    node = item["node"]
+    texto = node.text or ""
+    antes, alvo, depois = texto[:a], texto[a:b], texto[b:]
+    if not alvo:
+        return False
+    node.text = antes
+    span = ET.Element(
+        f"{{{NS['text']}}}span",
+        {f"{{{NS['text']}}}style-name": estilo}
+    )
+    span.text = alvo
+    pai = encontrar_pai(paragrafo, node)
+    if pai is None:
+        return False
+    idx = list(pai).index(node)
+    pai.insert(idx + 1, span)
+    if depois:
+        span.tail = depois
+    return True
 
+
+def aplicar_tail(paragrafo, item, a, b, estilo):
+    node = item["node"]
+    texto = node.tail or ""
+    antes, alvo, depois = texto[:a], texto[a:b], texto[b:]
+    if not alvo:
+        return False
+    node.tail = antes
+    span = ET.Element(
+        f"{{{NS['text']}}}span",
+        {f"{{{NS['text']}}}style-name": estilo}
+    )
+    span.text = alvo
+    pai = encontrar_pai(paragrafo, node)
+    if pai is None:
+        return False
+    idx = list(pai).index(node)
+    pai.insert(idx + 1, span)
+    if depois:
+        span.tail = depois
+    return True
+
+
+def processar_paragrafo(paragrafo, estilo, estilos):
+    mapa = montar_mapa(paragrafo)
+    texto = "".join(x["texto"] for x in mapa)
+    matches = list(PADRAO.finditer(texto))
+    encontrados = len(matches)
+    ja = novos = 0
+
+    for match in reversed(matches):
+        ini, fim = match.span()
+        afetados = [
+            x for x in mapa
+            if x["fim"] > ini and x["inicio"] < fim
+            and x["kind"] in ("text", "tail")
+        ]
+        if not afetados:
+            continue
+
+        if all(estilo_sublinhado(x["node"], estilos) for x in afetados):
+            ja += 1
+            continue
+
+        alterou = False
+        mapa_atual = montar_mapa(paragrafo)
+
+        for item in reversed(mapa_atual):
+            if item["kind"] not in ("text", "tail"):
+                continue
+            if item["fim"] <= ini or item["inicio"] >= fim:
+                continue
+
+            a = max(ini, item["inicio"]) - item["inicio"]
+            b = min(fim, item["fim"]) - item["inicio"]
+            if b <= a:
+                continue
+
+            ok = (
+                aplicar_span(paragrafo, item, a, b, estilo)
+                if item["kind"] == "text"
+                else aplicar_tail(paragrafo, item, a, b, estilo)
+            )
+            alterou = alterou or ok
+
+        if alterou:
+            novos += 1
+
+    return encontrados, ja, novos
+
+
+def processar_odt(entrada, saida):
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        with zipfile.ZipFile(entrada, "r") as z:
+            z.extractall(tmp)
+
+        content = tmp / "content.xml"
+        styles_file = tmp / "styles.xml"
+        tc = ET.parse(content)
+        root = tc.getroot()
+        ts = ET.parse(styles_file)
+        sr = ts.getroot()
+
+        styles = sr.find(f"{{{NS['office']}}}styles")
+        if styles is None:
+            styles = ET.SubElement(sr, f"{{{NS['office']}}}styles")
+
+        estilo = criar_estilo_sublinhado(styles)
+        estilos = {}
+        for s in sr.iter(f"{{{NS['style']}}}style"):
+            n = s.attrib.get(f"{{{NS['style']}}}name")
+            if n:
+                estilos[n] = s
+
+        encontrados = ja = novos = 0
+        for p in root.iter(f"{{{NS['text']}}}p"):
+            e, j, n = processar_paragrafo(p, estilo, estilos)
+            encontrados += e
+            ja += j
+            novos += n
+
+        tc.write(content, encoding="UTF-8", xml_declaration=True)
+        ts.write(styles_file, encoding="UTF-8", xml_declaration=True)
+
+        with zipfile.ZipFile(saida, "w") as z:
+            mime = tmp / "mimetype"
+            if mime.exists():
+                z.write(mime, "mimetype", compress_type=zipfile.ZIP_STORED)
+            for f in tmp.rglob("*"):
+                if f.is_file() and f.name != "mimetype":
+                    z.write(f, f.relative_to(tmp).as_posix(),
+                            compress_type=zipfile.ZIP_DEFLATED)
+
+    print("\n" + "=" * 60)
+    print("RESULTADO")
+    print("=" * 60)
+    print(f"Cabeçalhos encontrados : {encontrados}")
+    print(f"Já estavam sublinhados : {ja}")
+    print(f"Novos sublinhados      : {novos}")
+    print(f"Arquivo gerado         : {saida.name}")
+    print("=" * 60)
+
+
+def main():
+    print("=" * 60)
+    print("PROCESSADOR DE ARQUIVOS ODT - WHATSAPP")
+    print("=" * 60)
+
+    args = sys.argv[1:]
+    entrada = None
+    if args:
+        candidato = " ".join(args).strip('" ')
+        if Path(candidato).exists():
+            entrada = candidato
         else:
+            for a in args:
+                if Path(a.strip('" ')).exists():
+                    entrada = a.strip('" ')
+                    break
 
-            root_styles = ET.Element(
-                f"{{{NS['office']}}}document-styles"
-            )
+    if not entrada:
+        entrada = input("\nDigite ou cole o caminho do arquivo .odt:\n> ").strip('" ')
 
-            tree_styles = ET.ElementTree(root_styles)
+    p = Path(entrada)
+    if not p.exists():
+        print("\n[ERRO] Arquivo não encontrado.")
+    elif p.suffix.lower() != ".odt":
+        print("\n[ERRO] O arquivo precisa ser .odt.")
+    else:
+        saida = p.with_name(f"{p.stem}_formatado{p.suffix}")
+        try:
+            print("\nProcessando...")
+            processar_odt(p, saida)
+        except Exception as e:
+            print(f"\n[ERRO] {e}")
 
-        estilos = root_styles.find(
-            f"{{{NS['office']}}}styles"
-        )
+    input("\nPressione ENTER para fechar...")
 
-        if estilos is None:
-
-            estilos = ET.SubElement(
-                root_styles,
-                f"{{{NS['office']}}}styles"
-            )
-
-        estilo_sublinhado = criar_estilo_sublinhado(
-            estilos
-        )
-
-        total = 0
-
-        elementos = root_content.iter(
-            f"{{{NS['text']}}}p"
-        )
-
-        for paragrafo in elementos:
-
-            total += processar_paragrafo(
-                paragrafo,
-                estilo_sublinhado
-            )
-
-        tree_content.write(
-            content_xml,
-            encoding="UTF-8",
-            xml_declaration=True
-        )
-
-        tree_styles.write(
-            styles_xml,
-            encoding="UTF-8",
-            xml_declaration=True
-        )
-
-        with zipfile.ZipFile(
-            arquivo_saida,
-            "w",
-            zipfile.ZIP_DEFLATED
-        ) as zip_out:
-
-            mimetype = temp / "mimetype"
-
-            if mimetype.exists():
-
-                zip_out.write(
-                    mimetype,
-                    "mimetype",
-                    compress_type=zipfile.ZIP_STORED
-                )
-
-            for arquivo in temp.rglob("*"):
-
-                if not arquivo.is_file():
-                    continue
-
-                relativo = arquivo.relative_to(temp)
-
-                if relativo.as_posix() == "mimetype":
-                    continue
-
-                zip_out.write(
-                    arquivo,
-                    relativo.as_posix()
-                )
-
-    print(f"\n[ SUCESSO ] Arquivo gerado: {arquivo_saida.name}")
-    print(f"            Cabeçalhos formatados: {total}")
-    print(f"            Salvo em: {arquivo_saida.parent}")
-
-
-# ============================================================
-# MAIN
-# ============================================================
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("      PROCESSADOR DE ARQUIVOS ODT (FORMATAR WHATSAPP)      ")
-    print("=" * 60)
-
-    raw_args = sys.argv[1:]
-    arquivo_entrada = None
-
-    # 1. Tenta identificar se o arquivo foi arrastado para cima do executável
-    if raw_args:
-        caminho_tentativa = " ".join(raw_args).strip('"')
-        if Path(caminho_tentativa).exists():
-            arquivo_entrada = caminho_tentativa
-
-    # 2. Caso contrário, pede manualmente para o usuário digitar/colar o caminho
-    if not arquivo_entrada:
-        print("\nNenhum arquivo foi arrastado para o programa.")
-        entrada_usuario = input("Digite ou cole o caminho do arquivo .odt e aperte ENTER:\n> ")
-        # Remove aspas extras que o Windows costuma colocar ao copiar caminhos
-        arquivo_entrada = entrada_usuario.strip('" ')
-
-    # 3. Validação e execução do processamento
-    if arquivo_entrada and Path(arquivo_entrada).exists():
-        caminho_in = Path(arquivo_entrada)
-        
-        if caminho_in.suffix.lower() != ".odt":
-            print("\n[ ERRO ] O arquivo precisa ser do formato .odt (LibreOffice).")
-        else:
-            # Cria automaticamente o arquivo modificado com a tag "_formatado" na mesma pasta do original
-            caminho_out = caminho_in.with_name(f"{caminho_in.stem}_formatado{caminho_in.suffix}")
-            
-            try:
-                print("\nProcessando... Por favor, aguarde.")
-                processar_odt(caminho_in, caminho_out)
-            except Exception as e:
-                print(f"\n[ ERRO ] Ocorreu uma falha ao processar o arquivo: {e}")
-    else:
-        print("\n[ ERRO ] Arquivo não encontrado ou caminho inválido.")
-
-    # 4. Trava a janela para que ela não feche sozinha
-    print("\n" + "=" * 60)
-    input("Pressione ENTER para fechar o programa...")
+    main()

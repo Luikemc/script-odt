@@ -343,36 +343,31 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 
 if __name__ == "__main__":
 
-    # Reconstrói argumentos que foram divididos por espaços no Windows
     raw_args = sys.argv[1:]
-    
-    # Se o argumento veio dividido por causa de espaços no caminho, reagrupa
+
+    # Trata caminhos divididos por espaços no Windows
     if raw_args and not Path(" ".join(raw_args)).exists():
-        # Tenta reconstruir se a junção de tudo formar um arquivo válido
         caminho_reconstruido = " ".join(raw_args)
         if Path(caminho_reconstruido).exists():
             arquivos_recebidos = [caminho_reconstruido]
         else:
             arquivos_recebidos = raw_args
     else:
-        # Se veio um único argumento unificado ou lista direta
         arquivos_recebidos = [" ".join(raw_args)] if len(raw_args) > 1 and Path(" ".join(raw_args)).exists() else raw_args
 
     print("========================================")
     print(" SUBLINHAR CABEÇALHOS WHATSAPP (ODT)")
     print("========================================")
 
-    # Se não passou nada ou se o caminho for inválido
     if not arquivos_recebidos:
         print("\nINSTRUÇÃO:")
         print("Arraste e solte um ou mais arquivos .odt em cima deste programa.\n")
         input("Pressione ENTER para fechar...")
         sys.exit(0)
 
-     processados = 0
+    processados = 0
 
     for caminho in arquivos_recebidos:
-        # Limpa aspas extras que o Windows pode ter colocado
         caminho_limpo = caminho.strip('"\'')
         entrada = Path(caminho_limpo)
 

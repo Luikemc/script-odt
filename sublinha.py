@@ -343,23 +343,38 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 
 if __name__ == "__main__":
 
-    # Remove o próprio nome do script da lista de argumentos
-    arquivos_recebidos = sys.argv[1:]
+    # Reconstrói argumentos que foram divididos por espaços no Windows
+    raw_args = sys.argv[1:]
+    
+    # Se o argumento veio dividido por causa de espaços no caminho, reagrupa
+    if raw_args and not Path(" ".join(raw_args)).exists():
+        # Tenta reconstruir se a junção de tudo formar um arquivo válido
+        caminho_reconstruido = " ".join(raw_args)
+        if Path(caminho_reconstruido).exists():
+            arquivos_recebidos = [caminho_reconstruido]
+        else:
+            arquivos_recebidos = raw_args
+    else:
+        # Se veio um único argumento unificado ou lista direta
+        arquivos_recebidos = [" ".join(raw_args)] if len(raw_args) > 1 and Path(" ".join(raw_args)).exists() else raw_args
 
     print("========================================")
     print(" SUBLINHAR CABEÇALHOS WHATSAPP (ODT)")
     print("========================================")
 
-    # Se não passou nada (ex: o usuário só deu 2 clicks no .exe diretamente)
+    # Se não passou nada ou se o caminho for inválido
     if not arquivos_recebidos:
         print("\nINSTRUÇÃO:")
         print("Arraste e solte um ou mais arquivos .odt em cima deste programa.\n")
         input("Pressione ENTER para fechar...")
         sys.exit(0)
 
-    # Processa todos os arquivos arrastados/passados
+     processados = 0
+
     for caminho in arquivos_recebidos:
-        entrada = Path(caminho)
+        # Limpa aspas extras que o Windows pode ter colocado
+        caminho_limpo = caminho.strip('"\'')
+        entrada = Path(caminho_limpo)
 
         if not entrada.exists():
             print(f"\n[ ERRO ] Arquivo não encontrado: {entrada}")
@@ -373,8 +388,13 @@ if __name__ == "__main__":
 
         try:
             processar_odt(entrada, saida)
+            processados += 1
         except Exception as e:
             print(f"\n[ ERRO ] Falha ao processar {entrada.name}: {e}")
+
+    if processados == 0:
+        print("\nNenhum arquivo válido foi processado.")
+        print("Verifique se o arquivo arrastado é um .odt válido.")
 
     print("\nProcessamento concluído!")
     input("Pressione ENTER para fechar...")

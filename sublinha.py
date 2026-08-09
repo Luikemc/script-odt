@@ -1,8 +1,6 @@
-```python
 import re
 import sys
 import zipfile
-import shutil
 import tempfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -116,12 +114,6 @@ def criar_estilo_sublinhado(styles_root):
 def processar_paragrafo(paragrafo, estilo_sublinhado):
     """
     Procura cabeçalhos de mensagens dentro do parágrafo.
-
-    Quando encontra:
-
-        [01/03/2025, 11:10:24] Regis Polymec:
-
-    cria um span com sublinhado somente nesse trecho.
     """
 
     texto = texto_do_elemento(paragrafo)
@@ -130,10 +122,6 @@ def processar_paragrafo(paragrafo, estilo_sublinhado):
 
     if not matches:
         return 0
-
-    # --------------------------------------------------------
-    # Criamos uma representação dos nós de texto.
-    # --------------------------------------------------------
 
     nos_texto = []
 
@@ -154,10 +142,6 @@ def processar_paragrafo(paragrafo, estilo_sublinhado):
         item["fim"] = posicao + tamanho
         posicao += tamanho
 
-    # --------------------------------------------------------
-    # Para cada ocorrência encontrada
-    # --------------------------------------------------------
-
     total = 0
 
     for match in reversed(matches):
@@ -165,7 +149,6 @@ def processar_paragrafo(paragrafo, estilo_sublinhado):
         inicio = match.start()
         fim = match.end()
 
-        # Descobre os nós atingidos
         afetados = []
 
         for item in nos_texto:
@@ -179,11 +162,6 @@ def processar_paragrafo(paragrafo, estilo_sublinhado):
 
         if not afetados:
             continue
-
-        # ----------------------------------------------------
-        # Caso comum:
-        # o cabeçalho inteiro está dentro de um único nó.
-        # ----------------------------------------------------
 
         if len(afetados) == 1:
 
@@ -201,7 +179,6 @@ def processar_paragrafo(paragrafo, estilo_sublinhado):
             ]
             depois = texto_original[fim_local:]
 
-            # Substituímos o texto original
             node.text = antes
 
             span = ET.Element(
@@ -214,7 +191,6 @@ def processar_paragrafo(paragrafo, estilo_sublinhado):
 
             span.text = selecionado
 
-            # Insere o span logo depois do nó
             pai = encontrar_pai(paragrafo, node)
 
             if pai is not None:
@@ -259,10 +235,6 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 
         temp = Path(temp)
 
-        # ----------------------------------------------------
-        # Extrai o ODT
-        # ----------------------------------------------------
-
         with zipfile.ZipFile(
             arquivo_entrada,
             "r"
@@ -272,10 +244,6 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 
         content_xml = temp / "content.xml"
         styles_xml = temp / "styles.xml"
-
-        # ----------------------------------------------------
-        # Carrega XML
-        # ----------------------------------------------------
 
         tree_content = ET.parse(content_xml)
         root_content = tree_content.getroot()
@@ -293,10 +261,6 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 
             tree_styles = ET.ElementTree(root_styles)
 
-        # ----------------------------------------------------
-        # Cria estilo de sublinhado
-        # ----------------------------------------------------
-
         estilos = root_styles.find(
             f"{{{NS['office']}}}styles"
         )
@@ -312,10 +276,6 @@ def processar_odt(arquivo_entrada, arquivo_saida):
             estilos
         )
 
-        # ----------------------------------------------------
-        # Processa todos os parágrafos
-        # ----------------------------------------------------
-
         total = 0
 
         elementos = root_content.iter(
@@ -329,10 +289,6 @@ def processar_odt(arquivo_entrada, arquivo_saida):
                 estilo_sublinhado
             )
 
-        # ----------------------------------------------------
-        # Salva XML
-        # ----------------------------------------------------
-
         tree_content.write(
             content_xml,
             encoding="UTF-8",
@@ -345,17 +301,12 @@ def processar_odt(arquivo_entrada, arquivo_saida):
             xml_declaration=True
         )
 
-        # ----------------------------------------------------
-        # Cria novo ODT
-        # ----------------------------------------------------
-
         with zipfile.ZipFile(
             arquivo_saida,
             "w",
             zipfile.ZIP_DEFLATED
         ) as zip_out:
 
-            # ODT exige mimetype primeiro e sem compressão
             mimetype = temp / "mimetype"
 
             if mimetype.exists():
@@ -381,13 +332,9 @@ def processar_odt(arquivo_entrada, arquivo_saida):
                     relativo.as_posix()
                 )
 
-    print()
-    print("========================================")
-    print(" CONCLUÍDO")
-    print("========================================")
-    print(f"Arquivo: {arquivo_saida}")
-    print(f"Cabeçalhos encontrados: {total}")
-    print()
+    print(f"[ SUCESSO ] Arquivo gerado: {arquivo_saida.name}")
+    print(f"            Cabeçalhos formatados: {total}")
+    print("-" * 50)
 
 
 # ============================================================
@@ -396,43 +343,38 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 2:
+    # Remove o próprio nome do script da lista de argumentos
+    arquivos_recebidos = sys.argv[1:]
 
-        print()
-        print("Uso:")
-        print(
-            "python sublinhar_whatsapp.py arquivo.odt"
-        )
-        print()
+    print("========================================")
+    print(" SUBLINHAR CABEÇALHOS WHATSAPP (ODT)")
+    print("========================================")
 
-        sys.exit(1)
+    # Se não passou nada (ex: o usuário só deu 2 clicks no .exe diretamente)
+    if not arquivos_recebidos:
+        print("\nINSTRUÇÃO:")
+        print("Arraste e solte um ou mais arquivos .odt em cima deste programa.\n")
+        input("Pressione ENTER para fechar...")
+        sys.exit(0)
 
-    entrada = Path(sys.argv[1])
+    # Processa todos os arquivos arrastados/passados
+    for caminho in arquivos_recebidos:
+        entrada = Path(caminho)
 
-    if not entrada.exists():
+        if not entrada.exists():
+            print(f"\n[ ERRO ] Arquivo não encontrado: {entrada}")
+            continue
 
-        print(
-            f"Arquivo não encontrado: {entrada}"
-        )
+        if entrada.suffix.lower() != ".odt":
+            print(f"\n[ ERRO ] Ignorado ({entrada.name}): Não é um arquivo .odt")
+            continue
 
-        sys.exit(1)
+        saida = entrada.with_name(entrada.stem + "_sublinhado.odt")
 
-    if entrada.suffix.lower() != ".odt":
+        try:
+            processar_odt(entrada, saida)
+        except Exception as e:
+            print(f"\n[ ERRO ] Falha ao processar {entrada.name}: {e}")
 
-        print()
-        print(
-            "ERRO: este script trabalha com arquivos .odt."
-        )
-        print()
-
-        sys.exit(1)
-
-    saida = entrada.with_name(
-        entrada.stem + "_sublinhado.odt"
-    )
-
-    processar_odt(
-        entrada,
-        saida
-    )
-```
+    print("\nProcessamento concluído!")
+    input("Pressione ENTER para fechar...")

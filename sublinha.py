@@ -41,7 +41,7 @@ for prefix, uri in NS.items():
 
 
 # ============================================================
-# FUNÇÕES
+# FUNÇÕES DE PROCESSAMENTO
 # ============================================================
 
 def texto_do_elemento(elemento):
@@ -332,9 +332,9 @@ def processar_odt(arquivo_entrada, arquivo_saida):
                     relativo.as_posix()
                 )
 
-    print(f"[ SUCESSO ] Arquivo gerado: {arquivo_saida.name}")
+    print(f"\n[ SUCESSO ] Arquivo gerado: {arquivo_saida.name}")
     print(f"            Cabeçalhos formatados: {total}")
-    print("-" * 50)
+    print(f"            Salvo em: {arquivo_saida.parent}")
 
 
 # ============================================================
@@ -342,54 +342,44 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 # ============================================================
 
 if __name__ == "__main__":
+    print("=" * 60)
+    print("      PROCESSADOR DE ARQUIVOS ODT (FORMATAR WHATSAPP)      ")
+    print("=" * 60)
 
     raw_args = sys.argv[1:]
+    arquivo_entrada = None
 
-    # Trata caminhos divididos por espaços no Windows
-    if raw_args and not Path(" ".join(raw_args)).exists():
-        caminho_reconstruido = " ".join(raw_args)
-        if Path(caminho_reconstruido).exists():
-            arquivos_recebidos = [caminho_reconstruido]
+    # 1. Tenta identificar se o arquivo foi arrastado para cima do executável
+    if raw_args:
+        caminho_tentativa = " ".join(raw_args).strip('"')
+        if Path(caminho_tentativa).exists():
+            arquivo_entrada = caminho_tentativa
+
+    # 2. Caso contrário, pede manualmente para o usuário digitar/colar o caminho
+    if not arquivo_entrada:
+        print("\nNenhum arquivo foi arrastado para o programa.")
+        entrada_usuario = input("Digite ou cole o caminho do arquivo .odt e aperte ENTER:\n> ")
+        # Remove aspas extras que o Windows costuma colocar ao copiar caminhos
+        arquivo_entrada = entrada_usuario.strip('" ')
+
+    # 3. Validação e execução do processamento
+    if arquivo_entrada and Path(arquivo_entrada).exists():
+        caminho_in = Path(arquivo_entrada)
+        
+        if caminho_in.suffix.lower() != ".odt":
+            print("\n[ ERRO ] O arquivo precisa ser do formato .odt (LibreOffice).")
         else:
-            arquivos_recebidos = raw_args
+            # Cria automaticamente o arquivo modificado com a tag "_formatado" na mesma pasta do original
+            caminho_out = caminho_in.with_name(f"{caminho_in.stem}_formatado{caminho_in.suffix}")
+            
+            try:
+                print("\nProcessando... Por favor, aguarde.")
+                processar_odt(caminho_in, caminho_out)
+            except Exception as e:
+                print(f"\n[ ERRO ] Ocorreu uma falha ao processar o arquivo: {e}")
     else:
-        arquivos_recebidos = [" ".join(raw_args)] if len(raw_args) > 1 and Path(" ".join(raw_args)).exists() else raw_args
+        print("\n[ ERRO ] Arquivo não encontrado ou caminho inválido.")
 
-    print("========================================")
-    print(" SUBLINHAR CABEÇALHOS WHATSAPP (ODT)")
-    print("========================================")
-
-    if not arquivos_recebidos:
-        print("\nINSTRUÇÃO:")
-        print("Arraste e solte um ou mais arquivos .odt em cima deste programa.\n")
-        input("Pressione ENTER para fechar...")
-        sys.exit(0)
-
-    processados = 0
-
-    for caminho in arquivos_recebidos:
-        caminho_limpo = caminho.strip('"\'')
-        entrada = Path(caminho_limpo)
-
-        if not entrada.exists():
-            print(f"\n[ ERRO ] Arquivo não encontrado: {entrada}")
-            continue
-
-        if entrada.suffix.lower() != ".odt":
-            print(f"\n[ ERRO ] Ignorado ({entrada.name}): Não é um arquivo .odt")
-            continue
-
-        saida = entrada.with_name(entrada.stem + "_sublinhado.odt")
-
-        try:
-            processar_odt(entrada, saida)
-            processados += 1
-        except Exception as e:
-            print(f"\n[ ERRO ] Falha ao processar {entrada.name}: {e}")
-
-    if processados == 0:
-        print("\nNenhum arquivo válido foi processado.")
-        print("Verifique se o arquivo arrastado é um .odt válido.")
-
-    print("\nProcessamento concluído!")
-    input("Pressione ENTER para fechar...")
+    # 4. Trava a janela para que ela não feche sozinha
+    print("\n" + "=" * 60)
+    input("Pressione ENTER para fechar o programa...")

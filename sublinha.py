@@ -11,8 +11,20 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 # ============================================================
-# SUBLINHA CABECALHOS - V7
+# SUBLINHA CABECALHOS - V8
 # ============================================================
+#
+# Novidade da V8: arrastar o arquivo para DENTRO da janela (além
+# de arrastar sobre o ícone do programa, que já funcionava desde a
+# V7). Isso usa uma biblioteca extra chamada "tkinterdnd2", que não
+# vem junto com o Python:
+#
+#     pip install tkinterdnd2
+#
+# Se ela não estiver instalada, o programa continua funcionando
+# normalmente (botão "Escolher arquivo" e arrastar sobre o ícone),
+# só a área de "solte o arquivo aqui" dentro da janela fica
+# desativada, com um aviso explicando como habilitá-la.
 #
 # Objetivo:
 #   Encontrar cabeçalhos de conversas no formato:
@@ -1036,19 +1048,53 @@ def caminho_saida_padrao(caminho_entrada):
 # ============================================================
 # ============================================================
 #
-# Bem simples de propósito: um botão para escolher o arquivo, que
-# já processa na hora, e uma caixa de texto mostrando o que
-# aconteceu. Não precisa instalar nada — o Tkinter já vem junto
-# com o Python.
+# Bem simples de propósito: uma área para arrastar o arquivo (ou,
+# se preferir, um botão para escolher o arquivo), que já processa
+# na hora, e uma caixa de texto mostrando o que aconteceu.
+#
+# A área de "arrastar e soltar" depende da biblioteca opcional
+# "tkinterdnd2" (pip install tkinterdnd2). Se ela não estiver
+# instalada, a interface toda funciona normalmente do mesmo jeito,
+# só que sem a opção de soltar o arquivo dentro da janela — nesse
+# caso ainda dá para usar o botão, ou arrastar o arquivo por cima
+# do ícone do programa/.exe antes de abrir (isso nunca dependeu de
+# biblioteca nenhuma).
+
+def _tentar_importar_dnd():
+    """Tenta importar o tkinterdnd2. Retorna (TkinterDnD, DND_FILES)
+    ou (None, None) se não estiver instalado."""
+    try:
+        from tkinterdnd2 import TkinterDnD, DND_FILES
+        return TkinterDnD, DND_FILES
+    except Exception:
+        return None, None
+
+
+def _extrair_caminhos_soltos(janela, dados_evento):
+    """
+    Converte o texto bruto que o tkinterdnd2 entrega no evento de
+    soltar arquivo em uma lista de caminhos. Caminhos com espaço no
+    nome vêm entre chaves, ex: "{C:/pasta/meu arquivo.docx}" — por
+    isso usamos janela.tk.splitlist, que entende esse formato,
+    em vez de um simples .split().
+    """
+    try:
+        return list(janela.tk.splitlist(dados_evento))
+    except Exception:
+        return [dados_evento]
+
 
 def rodar_gui(arquivo_inicial=None):
     import tkinter as tk
     from tkinter import filedialog, messagebox, scrolledtext
 
-    janela = tk.Tk()
+    TkinterDnD, DND_FILES = _tentar_importar_dnd()
+    arrastar_disponivel = TkinterDnD is not None
+
+    janela = TkinterDnD.Tk() if arrastar_disponivel else tk.Tk()
     janela.title("Sublinhar Cabeçalhos - WhatsApp")
-    janela.geometry("640x480")
-    janela.minsize(520, 380)
+    janela.geometry("640x520")
+    janela.minsize(520, 420)
 
     tk.Label(
         janela,
@@ -1068,8 +1114,37 @@ def rodar_gui(arquivo_inicial=None):
         fg="#444444",
     ).pack(pady=(0, 10))
 
+    # ------------------------------------------------------------
+    # Área de arrastar-e-soltar
+    # ------------------------------------------------------------
+    if arrastar_disponivel:
+        texto_area = "Arraste aqui o arquivo (.odt, .docx ou .doc)"
+        cor_fundo = "#eef6ff"
+        cor_borda = "#4a90d9"
+    else:
+        texto_area = (
+            "Arrastar-e-soltar não está disponível nesta instalação.\n"
+            "Use o botão abaixo, ou instale com: pip install tkinterdnd2"
+        )
+        cor_fundo = "#f2f2f2"
+        cor_borda = "#999999"
+
+    area_soltar = tk.Label(
+        janela,
+        text=texto_area,
+        font=("Segoe UI", 11),
+        bg=cor_fundo,
+        fg="#333333",
+        relief="ridge",
+        bd=2,
+        height=4,
+        wraplength=520,
+        justify="center",
+    )
+    area_soltar.pack(fill="x", padx=16, pady=(0, 10))
+
     caixa_log = scrolledtext.ScrolledText(
-        janela, height=16, font=("Consolas", 10), state="disabled", wrap="word"
+        janela, height=14, font=("Consolas", 10), state="disabled", wrap="word"
     )
     caixa_log.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
@@ -1134,6 +1209,12 @@ def rodar_gui(arquivo_inicial=None):
             escrever_log("")
             escrever_log(traceback.format_exc())
 
+    def processar_varios(caminhos):
+        # Se soltarem mais de um arquivo de uma vez, processa cada
+        # um (gera um "..._formatado" para cada), um após o outro.
+        for caminho in caminhos:
+            processar(caminho)
+
     def escolher_arquivo():
         caminho = filedialog.askopenfilename(
             title="Escolha o arquivo da conversa",
@@ -1161,6 +1242,19 @@ def rodar_gui(arquivo_inicial=None):
         except Exception:
             messagebox.showinfo("Local do arquivo", pasta)
 
+    # Ativa o "soltar arquivo" na área dedicada (e também na caixa
+    # de log, para dar uma margem de erro maior a quem soltar um
+    # pouco fora da área marcada).
+    if arrastar_disponivel:
+        def ao_soltar(evento):
+            caminhos = _extrair_caminhos_soltos(janela, evento.data)
+            if caminhos:
+                processar_varios(caminhos)
+
+        for alvo in (area_soltar, caixa_log):
+            alvo.drop_target_register(DND_FILES)
+            alvo.dnd_bind("<<Drop>>", ao_soltar)
+
     tk.Button(
         barra_botoes,
         text="Escolher arquivo e processar",
@@ -1179,9 +1273,17 @@ def rodar_gui(arquivo_inicial=None):
     botao_abrir_pasta.pack(side="left", padx=6)
 
     escrever_log(
-        "Pronto. Clique em \"Escolher arquivo e processar\" para começar.\n"
-        "Formatos aceitos: .odt, .docx e .doc"
+        "Pronto. Arraste um arquivo para a área acima (ou clique em "
+        "\"Escolher arquivo e processar\").\nFormatos aceitos: .odt, .docx e .doc"
     )
+    if not arrastar_disponivel:
+        escrever_log(
+            "\n[ AVISO ] Arrastar-e-soltar dentro da janela está desativado "
+            "porque a biblioteca \"tkinterdnd2\" não foi encontrada.\n"
+            "Para habilitar: pip install tkinterdnd2  (e rode o programa de novo).\n"
+            "Enquanto isso, use o botão acima, ou arraste o arquivo por cima "
+            "do ícone do programa antes de abrir."
+        )
 
     if arquivo_inicial:
         janela.after(200, lambda: processar(arquivo_inicial))

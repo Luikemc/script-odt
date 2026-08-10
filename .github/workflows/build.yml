@@ -27,11 +27,7 @@ jobs:
           pip install pyinstaller tkinterdnd2
 
       - name: Gerar o .exe
-        run: |
-          pyinstaller --onefile --noconsole `
-            --name "SublinhaCabecalhos" `
-            --collect-all tkinterdnd2 `
-            sublinha_cabecalhos.py
+        run: pyinstaller --onefile --noconsole --name "SublinhaCabecalhos" --collect-all tkinterdnd2 sublinha_cabecalhos.py
 
       - name: Disponibilizar o .exe para download
         uses: actions/upload-artifact@v4

@@ -6,11 +6,12 @@ import zipfile
 import tempfile
 import platform
 import subprocess
+import traceback
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 # ============================================================
-# SUBLINHA CABECALHOS - V6
+# SUBLINHA CABECALHOS - V7
 # ============================================================
 #
 # Objetivo:
@@ -19,74 +20,80 @@ from xml.etree import ElementTree as ET
 #   [10/08/2000 11:17:20] Lucas Ribeiro:
 #   [10/08/2000, 11:17:20] Lucas Ribeiro:
 #   [ 10/08/2000 , 11:17:20 ] Lucas Ribeiro:
-#   10/08/2000 11:17:20 Lucas Ribeiro:          <- V6: sem colchetes
-#   10/08/2000, 11:17:20 Lucas Ribeiro:         <- V6: sem colchetes
+#   10/08/2000 11:17:20 Lucas Ribeiro:          <- sem colchetes
+#   10/08/2000, 11:17:20 Lucas Ribeiro:         <- sem colchetes
 #
 #   e sublinhar SOMENTE até o ":" do nome.
 #
-# O que mudou da V5 para a V6:
+# ------------------------------------------------------------
+# O QUE MUDOU DA V6 PARA A V7
+# ------------------------------------------------------------
 #
-#   1) FORMATOS ACEITOS: agora o programa aceita .odt, .docx E .doc
-#      (antes só .odt).
+#   BUG 1 CORRIGIDO — cabeçalho com quebra de linha no meio:
+#     Na V6, a regex excluía \n e \r do trecho do nome
+#     ("[^:\n\r]+?"). Se o nome ficasse dividido por uma quebra
+#     de linha (ex: "Lucas<quebra>Ribeiro:"), o cabeçalho INTEIRO
+#     deixava de casar com o padrão — e como ele simplesmente não
+#     é encontrado, nada é sublinhado e nada aparece no relatório
+#     como problema. É uma perda total e silenciosa do cabeçalho,
+#     bem diferente da "limitação cosmética" que o script dizia
+#     ter. Na V7 a regex não exclui mais \n/\r do nome, então o
+#     cabeçalho volta a ser encontrado e sublinhado normalmente.
+#     (Continua existindo uma limitação bem menor, e essa sim
+#     cosmética: o próprio caractere da quebra de linha, assim
+#     como um TAB, nunca recebe o traço de sublinhado nele mesmo
+#     — só o texto antes e depois dele. Isso é uma limitação do
+#     formato, não um bug.)
+#
+#   BUG 2 CORRIGIDO — TAB/quebra de linha misturado num mesmo
+#   "run" do DOCX/DOC fazia o trecho inteiro ser pulado:
+#     Na V6, um "run" do Word que misturasse texto normal com um
+#     TAB (ou quebra de linha) no meio era marcado como "não
+#     simples" e simplesmente ignorado por completo — nem o texto
+#     antes, nem o texto depois do TAB recebiam sublinhado. Isso
+#     era pior do que o comportamento do ODT (que sublinha em
+#     volta do TAB normalmente). Na V7, a função que divide um
+#     "run" foi reescrita para lidar com QUALQUER combinação de
+#     texto + tab + quebra de linha + outros elementos dentro do
+#     mesmo run, preservando tudo o que não é texto (marcadores,
+#     etc.) e sublinhando corretamente as partes de texto ao redor
+#     do TAB/quebra — igual ao que já acontecia no ODT.
+#
+#   BUG 3 CORRIGIDO — colchete "solto" (] sem [ correspondente)
+#   sendo sublinhado junto com o nome:
+#     Na V6, um texto malformado como "10/08/2000 11:17:20] Nome:"
+#     (sem colchete de abertura) fazia a regex casar pela variante
+#     "sem colchetes" e, como o "]" não é excluído do trecho do
+#     nome, ele acabava sendo incluído e sublinhado junto. Na V7,
+#     a variante "sem colchetes" só casa se NÃO houver um "]"
+#     logo em seguida (evita confundir um colchete de fechamento
+#     órfão com parte do cabeçalho), e o "]" também foi excluído
+#     do conjunto de caracteres aceitos no nome, como reforço.
+#
+# ------------------------------------------------------------
+# Formatos aceitos (mantido da V6): .odt, .docx e .doc
+# ------------------------------------------------------------
 #
 #        .odt  -> processado diretamente (é um zip com XML).
 #        .docx -> processado diretamente (também é um zip com XML,
 #                 mas com um esquema (schema) totalmente diferente
 #                 do ODF: word/document.xml, elementos <w:p>, <w:r>,
-#                 <w:t> etc.). Por isso foi escrito um processador
-#                 dedicado (bloco "DOCX" abaixo). Como o DOCX permite
-#                 formatação DIRETA no "run" (<w:rPr><w:u .../></w:rPr>),
-#                 não precisamos criar um estilo nomeado como no ODT -
-#                 isso simplifica bastante o processo.
-#
-#        .doc  -> este é o Word 97-2003, um formato BINÁRIO (OLE2),
-#                 não é XML e não dá para editar diretamente com
-#                 Python puro preservando a formatação. A única forma
-#                 confiável é usar o próprio LibreOffice, em modo
-#                 headless (sem abrir interface gráfica), para:
-#
-#                     .doc  --(LibreOffice)--> .docx
-#                     [processa o .docx com o mesmo código acima]
-#                     .docx --(LibreOffice)--> .doc
-#
-#                 Por isso, para processar arquivos .doc, é
-#                 necessário ter o LibreOffice instalado na máquina
+#                 <w:t> etc.).
+#        .doc  -> Word 97-2003 (binário/OLE2). É convertido nos
+#                 bastidores via LibreOffice (.doc -> .docx ->
+#                 processa -> .doc). Exige o LibreOffice instalado
 #                 (gratuito: https://www.libreoffice.org/download/).
-#                 Se ele não for encontrado, o programa avisa
-#                 claramente e não trava sem explicação.
 #
-#   2) CABEÇALHO SEM COLCHETES: o padrão de busca (PADRAO) agora
-#      aceita tanto "[data hora] Nome:" quanto "data hora Nome:"
-#      (sem os colchetes). As duas formas são tratadas como
-#      alternativas completas (ou casa o bloco inteiro com colchete
-#      de abertura E de fechamento, ou casa sem colchete nenhum) -
-#      isso evita casar um colchete "solto" por engano.
-#
-# Características mantidas (das versões anteriores, agora válidas
-# tanto para ODT quanto para DOCX):
+# Características mantidas:
 #   - preserva o arquivo original;
 #   - mantém sublinhados existentes;
 #   - completa sublinhados parciais;
 #   - entende texto dividido em vários trechos (spans/runs);
 #   - pode ser executado várias vezes;
 #   - gera relatório detalhado;
-#   - aceita arquivo arrastado para o .exe;
-#   - cria automaticamente *_formatado.<extensao original>.
-#
-# Limitação conhecida (cosmética, não gera perda de texto):
-#   se o cabeçalho contiver uma tabulação, quebra de linha, ou (só
-#   no DOCX) um trecho com formatação "mista" dentro do mesmo
-#   pedaço de texto NO MEIO do trecho a sublinhar, esse pedaço
-#   específico pode não receber o traço de sublinhado (o texto ao
-#   redor é sublinhado normalmente). É raro acontecer dentro de
-#   "[data hora] Nome:", mas fique ciente.
-#
-#   Para .doc: como o arquivo passa por duas conversões via
-#   LibreOffice (doc -> docx -> doc), pequenos detalhes de
-#   formatação do arquivo original (fontes muito específicas,
-#   layout de página etc.) podem sofrer pequenos ajustes causados
-#   pelo próprio LibreOffice durante a conversão. O texto e o
-#   sublinhado do cabeçalho, porém, são preservados normalmente.
+#   - cria automaticamente *_formatado.<extensao original>;
+#   - interface gráfica simples (Tkinter) além do modo linha de
+#     comando / arquivo arrastado.
 #
 # ============================================================
 
@@ -95,17 +102,23 @@ from xml.etree import ElementTree as ET
 # ------------------------------------------------------------
 #
 # Ou casa o bloco "[data hora]" completo (com os dois colchetes),
-# ou casa "data hora" sem colchete nenhum. Isso evita reconhecer
-# um colchete que abre sem fechar (ou vice-versa) como se fizesse
-# parte do cabeçalho.
+# ou casa "data hora" sem colchete nenhum — e, nesse segundo caso,
+# só casa se não houver um "]" logo em seguida (isso evita tratar
+# um colchete de fechamento órfão como se fosse parte do
+# cabeçalho: bug 3 da V6).
+#
+# O trecho do nome aceita QUALQUER caractere, inclusive quebras de
+# linha, exceto ":" (fim do nome) e "]" (evita vazar um colchete
+# solto para dentro do nome: bug 3 da V6). Antes (V6) ele também
+# excluía \n e \r, o que causava o bug 1.
 
 PADRAO = re.compile(
     r'(?:'
     r'\[\s*\d{2}/\d{2}/\d{4}\s*(?:,\s*)?\d{2}:\d{2}:\d{2}\s*\]'
     r'|'
-    r'\d{2}/\d{2}/\d{4}\s*(?:,\s*)?\d{2}:\d{2}:\d{2}'
+    r'\d{2}/\d{2}/\d{4}\s*(?:,\s*)?\d{2}:\d{2}:\d{2}(?!\s*\])'
     r')'
-    r'\s*[^:\n\r]+?:'
+    r'\s*[^:\]]+?:'
 )
 
 
@@ -435,16 +448,25 @@ def processar_odt(arquivo_entrada, arquivo_saida):
 # Diferença estrutural importante em relação ao ODT:
 #
 #   No ODF, um <text:span> pode conter outro <text:span> dentro
-#   dele - por isso, na V4/V5, o trecho sublinhado era inserido
-#   como FILHO do próprio nó de texto sendo dividido.
+#   dele. No formato do Word (WordprocessingML), o texto de um
+#   parágrafo é uma sequência de "runs" (<w:r>) IRMÃOS - um <w:r>
+#   não pode conter outro <w:r> dentro. Cada run carrega sua
+#   própria formatação em <w:rPr> (run properties) e seu conteúdo
+#   dentro de elementos como <w:t> (texto), <w:tab/> (tabulação) e
+#   <w:br/>/<w:cr/> (quebra de linha). Por isso, para sublinhar só
+#   um TRECHO de um run, esse run precisa ser dividido em até 3
+#   runs IRMÃOS (antes / trecho sublinhado / depois), cada um
+#   copiando a formatação original.
 #
-#   No formato do Word (WordprocessingML), o texto de um parágrafo
-#   é uma sequência de "runs" (<w:r>) IRMÃOS - um <w:r> não pode
-#   conter outro <w:r> dentro. Cada run carrega sua própria
-#   formatação em <w:rPr> (run properties) e seu texto dentro de
-#   <w:t>. Por isso, para sublinhar só um TRECHO de um run, esse
-#   run precisa ser dividido em até 3 runs IRMÃOS (antes / trecho
-#   sublinhado / depois), cada um copiando a formatação original.
+#   Na V6, essa divisão só era feita para o caso simples (run com
+#   um único <w:t> e nada mais). Um run que misturasse texto com
+#   <w:tab/> ou <w:br/> no meio era pulado por inteiro (bug 2). Na
+#   V7, a divisão do run foi generalizada: ela entende uma
+#   sequência qualquer de <w:t>/<w:tab/>/<w:br/>/<w:cr/> (e
+#   preserva sem alteração qualquer outro elemento raro que
+#   apareça no run, como marcadores internos do Word, para não
+#   perder nada do documento), e sabe dividir tudo isso em até 3
+#   runs preservando a formatação original em cada pedaço.
 
 NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS_XML = "http://www.w3.org/XML/1998/namespace"
@@ -476,42 +498,53 @@ def docx_coletar_runs(paragrafo):
     return runs
 
 
-def docx_texto_do_run(run):
+def docx_conteudo_do_run(run):
     """
-    Retorna (texto, simples).
-    "simples" = True quando o run é o caso comum (só um <w:t>),
-    que é seguro de dividir preservando 100% da estrutura.
-    Runs com tabulação/quebra de linha/múltiplos elementos são
-    lidos normalmente (para não perder texto na detecção do
-    cabeçalho), mas não são divididos (limitação conhecida,
-    documentada no topo do arquivo).
-    """
-    conteudo = [filho for filho in run if filho.tag != _w("rPr")]
-    texto = ""
-    for filho in conteudo:
-        if filho.tag == _w("t"):
-            texto += filho.text or ""
-        elif filho.tag == _w("tab"):
-            texto += "\t"
-        elif filho.tag in (_w("br"), _w("cr")):
-            texto += "\n"
-        # outros elementos (bookmarks, campos etc.) não geram texto
+    Descreve o CONTEÚDO de um run (tudo, exceto <w:rPr>) como uma
+    lista ordenada de pedaços:
 
-    simples = len(conteudo) == 1 and conteudo[0].tag == _w("t")
-    return texto, simples
+        {"elemento": <nó XML original>, "tipo": "t"/"tab"/"br"/"outro",
+         "texto": <string usada para posicionar e para underline>}
+
+    "texto" é o que entra no mapa de caracteres do parágrafo:
+      - "t"     -> o texto de dentro de <w:t>
+      - "tab"   -> "\t" (um caractere, representando a tabulação)
+      - "br"/"cr" -> "\n" (um caractere, representando a quebra)
+      - "outro" -> "" (elementos sem representação textual, como
+                   marcadores/bookmarks; não ocupam posição, mas
+                   são preservados na reconstrução do run)
+    """
+    pedacos = []
+    for filho in run:
+        if filho.tag == _w("rPr"):
+            continue
+        if filho.tag == _w("t"):
+            pedacos.append({"elemento": filho, "tipo": "t", "texto": filho.text or ""})
+        elif filho.tag == _w("tab"):
+            pedacos.append({"elemento": filho, "tipo": "tab", "texto": "\t"})
+        elif filho.tag in (_w("br"), _w("cr")):
+            pedacos.append({"elemento": filho, "tipo": "br", "texto": "\n"})
+        else:
+            # Elemento sem texto (bookmark, campo, etc.): preservado
+            # na reconstrução, mas não ocupa posição no mapa.
+            pedacos.append({"elemento": filho, "tipo": "outro", "texto": ""})
+    return pedacos
+
+
+def docx_texto_do_run(run):
+    return "".join(p["texto"] for p in docx_conteudo_do_run(run))
 
 
 def docx_construir_mapa(paragrafo):
     partes = []
     posicao = 0
     for run, pai in docx_coletar_runs(paragrafo):
-        texto, simples = docx_texto_do_run(run)
+        texto = docx_texto_do_run(run)
         if not texto:
             continue
         partes.append({
             "run": run, "pai": pai, "texto": texto,
             "inicio": posicao, "fim": posicao + len(texto),
-            "simples": simples,
         })
         posicao += len(texto)
     return partes
@@ -579,13 +612,24 @@ def docx_clonar_rpr(run):
     return copy.deepcopy(rPr) if rPr is not None else None
 
 
-def docx_criar_run(texto, rpr_modelo):
+def docx_montar_run(pedacos, rpr_modelo):
+    """Constrói um novo <w:r> a partir de uma lista de pedaços (na
+    mesma ordem em que devem aparecer), copiando a formatação
+    original. Elementos "outro" e "tab"/"br" são reaproveitados via
+    deepcopy do nó original (preserva quaisquer atributos que
+    tenham); pedaços de texto ("t") viram um <w:t xml:space="preserve">
+    novo, para garantir que espaços nas bordas do corte não se
+    percam."""
     run = ET.Element(_w("r"))
     if rpr_modelo is not None:
         run.append(copy.deepcopy(rpr_modelo))
-    t = ET.SubElement(run, _w("t"))
-    t.set(f"{{{NS_XML}}}space", "preserve")
-    t.text = texto
+    for pedaco in pedacos:
+        if pedaco["tipo"] == "t":
+            t = ET.SubElement(run, _w("t"))
+            t.set(f"{{{NS_XML}}}space", "preserve")
+            t.text = pedaco["texto"]
+        else:
+            run.append(copy.deepcopy(pedaco["elemento"]))
     return run
 
 
@@ -604,31 +648,72 @@ def docx_dividir_run(item, inicio_local, fim_local):
     """
     Substitui o run original por até 3 runs irmãos (antes / meio
     sublinhado / depois), copiando a formatação original em cada
-    um. Só é chamado quando item["simples"] é True.
+    um. Funciona com qualquer combinação de texto + tab + quebra de
+    linha + outros elementos dentro do run (bug 2 da V6: antes só
+    funcionava para um run com um único <w:t>).
     """
     run = item["run"]
     pai = item["pai"]
-    texto = item["texto"]
 
-    antes = texto[:inicio_local]
-    selecionado = texto[inicio_local:fim_local]
-    depois = texto[fim_local:]
-
-    if not selecionado:
+    if fim_local <= inicio_local:
         return False
 
     rpr_modelo = docx_clonar_rpr(run)
 
+    antes, meio, depois = [], [], []
+    pos = 0
+    for pedaco in docx_conteudo_do_run(run):
+        tamanho = len(pedaco["texto"])
+
+        if tamanho == 0:
+            # Elemento sem posição própria (bookmark, campo etc.):
+            # colocado no bloco correspondente à posição atual.
+            if pos < inicio_local:
+                antes.append(pedaco)
+            elif pos < fim_local:
+                meio.append(pedaco)
+            else:
+                depois.append(pedaco)
+            continue
+
+        elem_inicio, elem_fim = pos, pos + tamanho
+
+        if elem_fim <= inicio_local:
+            antes.append(pedaco)
+        elif elem_inicio >= fim_local:
+            depois.append(pedaco)
+        elif pedaco["tipo"] == "t":
+            corte1 = max(0, inicio_local - elem_inicio)
+            corte2 = min(tamanho, fim_local - elem_inicio)
+            texto = pedaco["texto"]
+            parte_antes, parte_meio, parte_depois = (
+                texto[:corte1], texto[corte1:corte2], texto[corte2:]
+            )
+            if parte_antes:
+                antes.append({"tipo": "t", "texto": parte_antes})
+            if parte_meio:
+                meio.append({"tipo": "t", "texto": parte_meio})
+            if parte_depois:
+                depois.append({"tipo": "t", "texto": parte_depois})
+        else:
+            # tab/br: elemento atômico (não dá para cortar no meio
+            # de uma tabulação/quebra) — como ele se sobrepõe à
+            # seleção, entra inteiro no bloco do meio.
+            meio.append(pedaco)
+
+        pos = elem_fim
+
+    if not meio:
+        return False
+
     novos = []
     if antes:
-        novos.append(docx_criar_run(antes, rpr_modelo))
-
-    run_meio = docx_criar_run(selecionado, rpr_modelo)
+        novos.append(docx_montar_run(antes, rpr_modelo))
+    run_meio = docx_montar_run(meio, rpr_modelo)
     docx_garantir_sublinhado(run_meio)
     novos.append(run_meio)
-
     if depois:
-        novos.append(docx_criar_run(depois, rpr_modelo))
+        novos.append(docx_montar_run(depois, rpr_modelo))
 
     indice = list(pai).index(run)
     pai.remove(run)
@@ -675,10 +760,6 @@ def docx_analisar_cabecalho(paragrafo, match, mapa_estilos):
         if trecho_fim <= trecho_inicio:
             continue
         if docx_run_tem_sublinhado(item["run"], mapa_estilos):
-            continue
-        if not item["simples"]:
-            # Limitação conhecida: run com tabulação/quebra/mistura
-            # de elementos não é dividido automaticamente.
             continue
 
         inicio_local = trecho_inicio - item_inicio
@@ -906,6 +987,26 @@ PROCESSADORES = {
 }
 
 
+def formatar_relatorio(estatisticas, arquivo_saida):
+    linhas = []
+    linhas.append("=" * 65)
+    linhas.append("                    RESULTADO")
+    linhas.append("=" * 65)
+    linhas.append("")
+    linhas.append(f"  Cabeçalhos encontrados       : {estatisticas['encontrados']}")
+    linhas.append(f"  Já totalmente sublinhados    : {estatisticas['completos']}")
+    linhas.append(f"  Parcialmente sublinhados     : {estatisticas['parciais']}")
+    linhas.append(f"  Sem sublinhado               : {estatisticas['sem_sublinhado']}")
+    linhas.append("")
+    linhas.append(f"  Cabeçalhos alterados         : {estatisticas['alterados']}")
+    linhas.append("")
+    linhas.append(f"  Arquivo gerado               : {Path(arquivo_saida).name}")
+    linhas.append(f"  Local                        : {Path(arquivo_saida).parent}")
+    linhas.append("")
+    linhas.append("=" * 65)
+    return "\n".join(linhas)
+
+
 def processar_arquivo(arquivo_entrada, arquivo_saida):
     extensao = Path(arquivo_entrada).suffix.lower()
     processador = PROCESSADORES.get(extensao)
@@ -917,130 +1018,207 @@ def processar_arquivo(arquivo_entrada, arquivo_saida):
         )
 
     estatisticas = processador(arquivo_entrada, arquivo_saida)
-
     print()
-    print("=" * 65)
-    print("                    RESULTADO")
-    print("=" * 65)
-    print()
-    print(f"  Cabeçalhos encontrados       : {estatisticas['encontrados']}")
-    print(f"  Já totalmente sublinhados    : {estatisticas['completos']}")
-    print(f"  Parcialmente sublinhados     : {estatisticas['parciais']}")
-    print(f"  Sem sublinhado               : {estatisticas['sem_sublinhado']}")
-    print()
-    print(f"  Cabeçalhos alterados         : {estatisticas['alterados']}")
-    print()
-    print(f"  Arquivo gerado               : {Path(arquivo_saida).name}")
-    print(f"  Local                        : {Path(arquivo_saida).parent}")
-    print()
-    print("=" * 65)
-
+    print(formatar_relatorio(estatisticas, arquivo_saida))
     return estatisticas
 
 
+def caminho_saida_padrao(caminho_entrada):
+    caminho_entrada = Path(caminho_entrada)
+    return caminho_entrada.with_name(
+        f"{caminho_entrada.stem}_formatado{caminho_entrada.suffix}"
+    )
+
+
 # ============================================================
-# ARQUIVO ARRASTADO / CAMINHO MANUAL
 # ============================================================
+#   INTERFACE GRÁFICA (Tkinter)
+# ============================================================
+# ============================================================
+#
+# Bem simples de propósito: um botão para escolher o arquivo, que
+# já processa na hora, e uma caixa de texto mostrando o que
+# aconteceu. Não precisa instalar nada — o Tkinter já vem junto
+# com o Python.
 
-def obter_arquivo():
-    argumentos = sys.argv[1:]
+def rodar_gui(arquivo_inicial=None):
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, scrolledtext
 
-    if argumentos:
-        candidato = " ".join(argumentos).strip('" ')
-        if Path(candidato).exists():
-            return candidato
-        for argumento in argumentos:
-            candidato = argumento.strip('" ')
-            if Path(candidato).exists():
-                return candidato
+    janela = tk.Tk()
+    janela.title("Sublinhar Cabeçalhos - WhatsApp")
+    janela.geometry("640x480")
+    janela.minsize(520, 380)
 
-    print()
-    print("Nenhum arquivo foi arrastado.")
-    print()
+    tk.Label(
+        janela,
+        text="Sublinhar cabeçalhos de conversa (.odt, .docx, .doc)",
+        font=("Segoe UI", 13, "bold"),
+        pady=10,
+    ).pack()
 
-    entrada = input("Digite ou cole o caminho do arquivo (.odt, .docx ou .doc):\n> ")
-    return entrada.strip('" ')
+    tk.Label(
+        janela,
+        text=(
+            "Procura por cabeçalhos como \"[10/08/2000 11:17:20] Nome:\"\n"
+            "e sublinha até o nome. Mantém o que já está sublinhado e\n"
+            "gera um novo arquivo \"..._formatado\" — o original não é alterado."
+        ),
+        justify="center",
+        fg="#444444",
+    ).pack(pady=(0, 10))
+
+    caixa_log = scrolledtext.ScrolledText(
+        janela, height=16, font=("Consolas", 10), state="disabled", wrap="word"
+    )
+    caixa_log.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+
+    barra_botoes = tk.Frame(janela)
+    barra_botoes.pack(pady=(0, 12))
+
+    def escrever_log(texto):
+        caixa_log.configure(state="normal")
+        caixa_log.insert("end", texto + "\n")
+        caixa_log.see("end")
+        caixa_log.configure(state="disabled")
+
+    def limpar_log():
+        caixa_log.configure(state="normal")
+        caixa_log.delete("1.0", "end")
+        caixa_log.configure(state="disabled")
+
+    ultimo_arquivo_gerado = {"caminho": None}
+
+    def processar(caminho):
+        caminho_entrada = Path(caminho)
+
+        if not caminho_entrada.exists():
+            messagebox.showerror("Erro", f"Arquivo não encontrado:\n{caminho_entrada}")
+            return
+
+        if caminho_entrada.suffix.lower() not in PROCESSADORES:
+            messagebox.showerror(
+                "Formato não suportado",
+                "Use um arquivo .odt, .docx ou .doc.",
+            )
+            return
+
+        caminho_saida = caminho_saida_padrao(caminho_entrada)
+        if caminho_saida.resolve() == caminho_entrada.resolve():
+            messagebox.showerror("Erro", "O arquivo de saída ficaria igual ao de entrada.")
+            return
+
+        limpar_log()
+        escrever_log(f"Processando: {caminho_entrada.name}")
+        escrever_log("Aguarde...\n")
+        janela.update_idletasks()
+
+        try:
+            estatisticas = PROCESSADORES[caminho_entrada.suffix.lower()](
+                caminho_entrada, caminho_saida
+            )
+            escrever_log(formatar_relatorio(estatisticas, caminho_saida))
+            escrever_log("\n[ SUCESSO ] Processamento concluído.")
+            ultimo_arquivo_gerado["caminho"] = caminho_saida
+            botao_abrir_pasta.configure(state="normal")
+        except zipfile.BadZipFile:
+            escrever_log("[ ERRO ] O arquivo não é um .odt/.docx válido (zip corrompido).")
+        except PermissionError:
+            escrever_log(
+                "[ ERRO ] Não foi possível acessar o arquivo.\n"
+                "Verifique se ele está aberto em outro programa."
+            )
+        except Exception as erro:
+            escrever_log("[ ERRO ] Ocorreu uma falha:\n")
+            escrever_log(str(erro))
+            escrever_log("")
+            escrever_log(traceback.format_exc())
+
+    def escolher_arquivo():
+        caminho = filedialog.askopenfilename(
+            title="Escolha o arquivo da conversa",
+            filetypes=[
+                ("Documentos suportados", "*.odt *.docx *.doc"),
+                ("Todos os arquivos", "*.*"),
+            ],
+        )
+        if caminho:
+            processar(caminho)
+
+    def abrir_pasta():
+        caminho = ultimo_arquivo_gerado["caminho"]
+        if not caminho:
+            return
+        pasta = str(Path(caminho).parent)
+        sistema = platform.system()
+        try:
+            if sistema == "Windows":
+                subprocess.run(["explorer", pasta])
+            elif sistema == "Darwin":
+                subprocess.run(["open", pasta])
+            else:
+                subprocess.run(["xdg-open", pasta])
+        except Exception:
+            messagebox.showinfo("Local do arquivo", pasta)
+
+    tk.Button(
+        barra_botoes,
+        text="Escolher arquivo e processar",
+        font=("Segoe UI", 11, "bold"),
+        command=escolher_arquivo,
+        padx=14, pady=8,
+    ).pack(side="left", padx=6)
+
+    botao_abrir_pasta = tk.Button(
+        barra_botoes,
+        text="Abrir pasta do resultado",
+        command=abrir_pasta,
+        state="disabled",
+        padx=14, pady=8,
+    )
+    botao_abrir_pasta.pack(side="left", padx=6)
+
+    escrever_log(
+        "Pronto. Clique em \"Escolher arquivo e processar\" para começar.\n"
+        "Formatos aceitos: .odt, .docx e .doc"
+    )
+
+    if arquivo_inicial:
+        janela.after(200, lambda: processar(arquivo_inicial))
+
+    janela.mainloop()
 
 
 # ============================================================
 # MAIN
 # ============================================================
+#
+# - Sem argumentos: abre a interface gráfica.
+# - Com um arquivo arrastado/passado por linha de comando: abre a
+#   interface gráfica já processando esse arquivo (mantém o antigo
+#   comportamento de "arrastar o arquivo para o programa", só que
+#   agora com uma janela em vez do modo texto).
 
 def main():
-    print("=" * 65)
-    print("       PROCESSADOR DE CABEÇALHOS - WHATSAPP V6")
-    print("=" * 65)
-    print()
-    print("Formatos aceitos: .odt, .docx e .doc")
-    print()
-    print("O programa procura cabeçalhos nos formatos:")
-    print("[10/08/2000 11:17:20] Nome:")
-    print("[10/08/2000, 11:17:20] Nome:")
-    print("10/08/2000 11:17:20 Nome:        (sem colchetes)")
-    print("10/08/2000, 11:17:20 Nome:       (sem colchetes)")
-    print()
-    print("Ele preserva o que já está sublinhado e")
-    print("completa somente o que estiver faltando.")
-    print()
+    argumentos = sys.argv[1:]
+    arquivo_inicial = None
 
-    arquivo = obter_arquivo()
-
-    if not arquivo:
-        print()
-        print("[ ERRO ] Nenhum arquivo informado.")
-        input("\nPressione ENTER para fechar...")
-        return
-
-    caminho_entrada = Path(arquivo)
-
-    if not caminho_entrada.exists():
-        print()
-        print("[ ERRO ] Arquivo não encontrado:")
-        print(caminho_entrada)
-        input("\nPressione ENTER para fechar...")
-        return
-
-    if caminho_entrada.suffix.lower() not in PROCESSADORES:
-        print()
-        print("[ ERRO ] Formato não suportado. Use .odt, .docx ou .doc.")
-        input("\nPressione ENTER para fechar...")
-        return
-
-    caminho_saida = caminho_entrada.with_name(
-        f"{caminho_entrada.stem}_formatado{caminho_entrada.suffix}"
-    )
-
-    if caminho_saida.resolve() == caminho_entrada.resolve():
-        print()
-        print("[ ERRO ] O arquivo de saída é igual ao arquivo de entrada.")
-        input("\nPressione ENTER para fechar...")
-        return
+    if argumentos:
+        candidato = " ".join(argumentos).strip('" ')
+        if Path(candidato).exists():
+            arquivo_inicial = candidato
+        else:
+            for argumento in argumentos:
+                candidato = argumento.strip('" ')
+                if Path(candidato).exists():
+                    arquivo_inicial = candidato
+                    break
 
     try:
-        print("Processando o documento...")
-        processar_arquivo(caminho_entrada, caminho_saida)
-        print()
-        print("[ SUCESSO ] Processamento concluído.")
-
-    except zipfile.BadZipFile:
-        print()
-        print("[ ERRO ] O arquivo não é um .odt/.docx válido (zip corrompido).")
-
-    except PermissionError:
-        print()
-        print("[ ERRO ] Não foi possível acessar o arquivo.")
-        print("Verifique se ele está aberto em outro programa.")
-
-    except Exception as erro:
-        print()
-        print("[ ERRO ] Ocorreu uma falha:")
-        print()
-        print(str(erro))
-
-    print()
-    print("=" * 65)
-
-    input("Pressione ENTER para fechar...")
+        rodar_gui(arquivo_inicial)
+    except ImportError:
+        print("[ ERRO ] Tkinter não está disponível nesta instalação do Python.")
+        input("\nPressione ENTER para fechar...")
 
 
 if __name__ == "__main__":

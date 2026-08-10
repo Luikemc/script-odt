@@ -6,7 +6,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 # ============================================================
-# SUBLINHA ODT - V4
+# SUBLINHA ODT - V5
 # ============================================================
 #
 # Objetivo:
@@ -18,45 +18,38 @@ from xml.etree import ElementTree as ET
 #
 #   e sublinhar SOMENTE até o ":" do nome.
 #
-# O que mudou da V3 para a V4 (correções de bugs reais,
-# confirmados com arquivos .odt de teste):
+# O que mudou da V4 para a V5 (compatibilidade com o Word):
 #
-#   1) PERDA DE TEXTO quando o cabeçalho está direto no texto
-#      do parágrafo (fora de qualquer <text:span>) - o caso
-#      mais comum ao colar de exportações de WhatsApp.
-#      Causa: a função que procurava o "elemento pai" para
-#      inserir o trecho sublinhado buscava all dentro da
-#      própria árvore do parágrafo; quando o nó a dividir ERA
-#      o próprio parágrafo, ele nunca é "filho de si mesmo",
-#      a busca falhava, e o texto já tinha sido truncado antes
-#      da falha ser detectada -> o resto do parágrafo (cabeçalho
-#      + mensagem) sumia.
+#   O estilo de sublinhado criado pelo script usava apenas o
+#   atributo "fo:text-decoration". Esse atributo é uma forma
+#   LEGADA (compatibilidade com StarOffice/OpenOffice.org 1.x)
+#   de indicar sublinhado. LibreOffice e Google Docs ainda o
+#   entendem, mas o filtro de importação ODF do Microsoft Word
+#   segue a especificação atual do ODF (1.1/1.2), que representa
+#   sublinhado através de outro conjunto de atributos:
 #
-#   2) TEXTO FORA DE ORDEM quando o cabeçalho estava dividido em
-#      vários <text:span> e o último span tinha texto colado
-#      logo depois dele (a mensagem). O texto que vinha depois
-#      ficava "preso" ao span antigo (agora truncado), que passa
-#      a vir ANTES do novo span sublinhado -> a mensagem aparecia
-#      antes do nome.
+#       style:text-underline-style="solid"
+#       style:text-underline-width="auto"
+#       style:text-underline-color="font-color"
 #
-#   Correção: em vez de inserir o trecho sublinhado como "próximo
-#   irmão" (o que exige achar o elemento pai, algo ambíguo/quebrado
-#   quando o nó é o próprio parágrafo), o trecho sublinhado agora é
-#   inserido como FILHO do próprio nó que está sendo dividido. Isso
-#   funciona de forma uniforme tanto para o texto do parágrafo
-#   quanto para o texto de um <text:span>, elimina a necessidade de
-#   procurar o "pai" (também deixa de ser O(n^2) no arquivo), e
-#   como efeito colateral positivo preserva qualquer formatação que
-#   o span original já tivesse (negrito, cor etc.), já que o novo
-#   span sublinhado fica aninhado dentro dele em vez de substituí-lo.
+#   Como o script só gravava "fo:text-decoration", o Word abria
+#   o arquivo, encontrava o span com o estilo, mas não reconhecia
+#   nenhuma instrução de sublinhado -> o texto aparecia sem
+#   sublinhado no Word, mesmo estando correto no LibreOffice e
+#   no Google Drive.
 #
-#   Para dividir um ".tail" (texto depois de um elemento como
-#   <text:line-break/> ou <text:tab/>) ainda é necessário saber o
-#   elemento pai - mas agora ele é capturado durante a própria
-#   travessia recursiva que monta o mapa do parágrafo, sem
-#   nenhuma busca na árvore.
+#   Correção 1: o estilo agora grava tanto o atributo legado
+#   quanto os atributos modernos, então funciona nas duas
+#   convenções ao mesmo tempo (Word, LibreOffice, Google Docs).
 #
-# Demais características, mantidas da V3:
+#   Correção 2: a detecção de "isso já está sublinhado?" agora
+#   também reconhece "style:text-underline-style" (diferente de
+#   "none"), e não só "fo:text-decoration". Isso evita sublinhar
+#   de novo (aninhado) um trecho que já foi sublinhado manualmente
+#   no LibreOffice usando o botão da barra de ferramentas, que
+#   grava só o atributo moderno.
+#
+# Demais características, mantidas da V4:
 #   - preserva o arquivo original;
 #   - mantém sublinhados existentes;
 #   - completa sublinhados parciais;
@@ -175,7 +168,14 @@ def construir_mapa(paragrafo):
 # ============================================================
 
 def criar_estilo_sublinhado(styles_root):
-    """Cria o estilo utilizado pelo programa. Se já existir, reutiliza."""
+    """
+    Cria o estilo utilizado pelo programa. Se já existir, reutiliza.
+
+    Grava tanto o atributo legado (fo:text-decoration) quanto os
+    atributos modernos (style:text-underline-*), para garantir
+    compatibilidade tanto com LibreOffice/Google Docs quanto com
+    o Word.
+    """
 
     nome = "SublinhadoAutomatico"
 
@@ -193,7 +193,16 @@ def criar_estilo_sublinhado(styles_root):
     )
 
     propriedades = ET.SubElement(estilo, f"{{{NS['style']}}}text-properties")
+
+    # Atributo legado (compatibilidade com StarOffice/OOo 1.x).
+    # LibreOffice e Google Docs entendem este.
     propriedades.set(f"{{{NS['fo']}}}text-decoration", "underline")
+
+    # Atributos modernos, exigidos pela especificação ODF atual.
+    # Sem eles, o Word não reconhece o sublinhado.
+    propriedades.set(f"{{{NS['style']}}}text-underline-style", "solid")
+    propriedades.set(f"{{{NS['style']}}}text-underline-width", "auto")
+    propriedades.set(f"{{{NS['style']}}}text-underline-color", "font-color")
 
     return nome
 
@@ -212,7 +221,14 @@ def criar_mapa_estilos(root_styles):
 
 
 def estilo_tem_sublinhado(node, mapa_estilos):
-    """Verifica se um nó está sublinhado (estilo direto, pai, ou herdado)."""
+    """
+    Verifica se um nó está sublinhado (estilo direto, pai, ou herdado).
+
+    Reconhece tanto o atributo legado "fo:text-decoration" quanto
+    o atributo moderno "style:text-underline-style" (usado, por
+    exemplo, quando alguém sublinha manualmente pelo botão da
+    barra de ferramentas do LibreOffice).
+    """
 
     if node is None:
         return False
@@ -239,6 +255,13 @@ def estilo_tem_sublinhado(node, mapa_estilos):
             ).lower()
 
             if "underline" in decoracao:
+                return True
+
+            sublinhado_moderno = propriedades.attrib.get(
+                f"{{{NS['style']}}}text-underline-style", ""
+            ).lower()
+
+            if sublinhado_moderno and sublinhado_moderno != "none":
                 return True
 
         nome = estilo.attrib.get(f"{{{NS['style']}}}parent-style-name")
@@ -643,7 +666,7 @@ def obter_arquivo():
 def main():
 
     print("=" * 65)
-    print("          PROCESSADOR ODT - WHATSAPP V4")
+    print("          PROCESSADOR ODT - WHATSAPP V5")
     print("=" * 65)
     print()
     print("O programa procura cabeçalhos no formato:")

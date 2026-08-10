@@ -169,20 +169,41 @@ def odt_construir_mapa(paragrafo):
 
 
 def odt_criar_estilo_sublinhado(styles_root):
-    nome = "SublinhadoAutomatico"
-    for style in styles_root.iter(f"{{{NS_ODT['style']}}}style"):
-        if style.attrib.get(f"{{{NS_ODT['style']}}}name") == nome:
-            return nome
+    """
+    Cria (ou, se já existir - por exemplo, gerado por uma versão
+    mais antiga deste script -, ATUALIZA) o estilo de sublinhado.
 
-    estilo = ET.SubElement(
-        styles_root, f"{{{NS_ODT['style']}}}style",
-        {f"{{{NS_ODT['style']}}}name": nome, f"{{{NS_ODT['style']}}}family": "text"}
-    )
-    propriedades = ET.SubElement(estilo, f"{{{NS_ODT['style']}}}text-properties")
+    Importante: mesmo quando o estilo já existe, sempre garantimos
+    que ele tenha tanto o atributo legado (fo:text-decoration)
+    quanto os atributos modernos (style:text-underline-*). Sem
+    isso, um arquivo gerado por uma versão antiga do script (que só
+    gravava o atributo legado) continuaria sem sublinhado de
+    verdade no Word e ao converter para .doc, mesmo já estando
+    marcado como "sublinhado" pelo estilo antigo.
+    """
+
+    nome = "SublinhadoAutomatico"
+
+    estilo = None
+    for candidato in styles_root.iter(f"{{{NS_ODT['style']}}}style"):
+        if candidato.attrib.get(f"{{{NS_ODT['style']}}}name") == nome:
+            estilo = candidato
+            break
+
+    if estilo is None:
+        estilo = ET.SubElement(
+            styles_root, f"{{{NS_ODT['style']}}}style",
+            {f"{{{NS_ODT['style']}}}name": nome, f"{{{NS_ODT['style']}}}family": "text"}
+        )
+
+    propriedades = estilo.find(f"{{{NS_ODT['style']}}}text-properties")
+    if propriedades is None:
+        propriedades = ET.SubElement(estilo, f"{{{NS_ODT['style']}}}text-properties")
 
     # Atributo legado (LibreOffice / Google Docs).
     propriedades.set(f"{{{NS_ODT['fo']}}}text-decoration", "underline")
-    # Atributos modernos (exigidos para o sublinhado aparecer no Word).
+    # Atributos modernos (exigidos para o sublinhado aparecer no Word
+    # e para sobreviver a uma conversão .odt -> .doc pelo LibreOffice).
     propriedades.set(f"{{{NS_ODT['style']}}}text-underline-style", "solid")
     propriedades.set(f"{{{NS_ODT['style']}}}text-underline-width", "auto")
     propriedades.set(f"{{{NS_ODT['style']}}}text-underline-color", "font-color")

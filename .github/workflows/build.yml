@@ -26,6 +26,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller tkinterdnd2
 
+      - name: Listar arquivos do repositório (para conferência)
+        run: Get-ChildItem -Recurse -Filter *.py
+
       - name: Gerar o .exe
         run: pyinstaller --onefile --noconsole --name "SublinhaCabecalhos" --collect-all tkinterdnd2 sublinha_cabecalhos.py
 
